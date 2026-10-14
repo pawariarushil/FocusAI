@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { HistoryItem, StudySession, User } from "../api";
+import type { HistoryItem, StudySession } from "../api";
+import type { AuthUser } from "../dashApi";
 import type { ActiveSession } from "../App";
 
 interface Props {
+  student: AuthUser;
   active: ActiveSession | null;
   onStart: (s: ActiveSession) => void;
   onEnd: () => void;
@@ -16,13 +18,9 @@ const fromSession = (s: StudySession): ActiveSession => ({
   keywords: s.study_context?.keywords ?? [],
 });
 
-export default function SessionSetup({ active, onStart, onEnd }: Props) {
-  const [students, setStudents] = useState<User[]>([]);
-  const [studentId, setStudentId] = useState("");
+export default function SessionSetup({ student, active, onStart, onEnd }: Props) {
   const [recent, setRecent] = useState<StudySession[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [newName, setNewName] = useState("");
-  const [newEmail, setNewEmail] = useState("");
   const [title, setTitle] = useState("");
   const [topic, setTopic] = useState("");
   const [objectives, setObjectives] = useState("");
@@ -31,15 +29,8 @@ export default function SessionSetup({ active, onStart, onEnd }: Props) {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api.students()
-      .then((list) => { setStudents(list); setStudentId((cur) => cur || list[0]?.id || ""); })
-      .catch((e: Error) => setError(e.message));
-  }, []);
-
-  useEffect(() => {
-    if (!studentId) return;
-    api.sessions(studentId).then(setRecent).catch(() => setRecent([]));
-  }, [studentId, active]);
+    api.sessions(student.id).then(setRecent).catch(() => setRecent([]));
+  }, [student.id, active]);
 
   const sessionId = active?.sessionId;
   const refreshHistory = () => { if (sessionId) api.history(sessionId).then(setHistory).catch(() => setHistory([])); };
@@ -50,21 +41,11 @@ export default function SessionSetup({ active, onStart, onEnd }: Props) {
     return () => { cancelled = true; };
   }, [sessionId]);
 
-  async function createStudent() {
-    setError("");
-    try {
-      const u = await api.createStudent(newEmail.trim(), newName.trim());
-      setStudents((s) => [...s, u]);
-      setStudentId(u.id);
-      setNewName(""); setNewEmail("");
-    } catch (e) { setError((e as Error).message); }
-  }
-
   async function start() {
     setBusy(true); setError("");
     try {
       const created = await api.createSession({
-        student_id: studentId, title: title.trim() || topic.trim(), topic: topic.trim(), learning_objectives: objectives.trim() || undefined,
+        student_id: student.id, title: title.trim() || topic.trim(), topic: topic.trim(), learning_objectives: objectives.trim() || undefined,
       });
       let ctx = created.study_context;
       if (material) ctx = await api.uploadMaterial(created.id, material);
@@ -114,27 +95,12 @@ export default function SessionSetup({ active, onStart, onEnd }: Props) {
 
       <section className="panel">
         <h2>Start a study session</h2>
-        {students.length === 0 ? (
-          <>
-            <p className="muted">No students yet. Create one (or run <code>uv run python scripts/seed_db.py</code>).</p>
-            <label>Name<input value={newName} onChange={(e) => setNewName(e.target.value)} /></label>
-            <label>Email<input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} /></label>
-            <button disabled={!newName.trim() || !newEmail.trim()} onClick={createStudent}>Create student</button>
-          </>
-        ) : (
-          <>
-            <label>Student
-              <select value={studentId} onChange={(e) => setStudentId(e.target.value)}>
-                {students.map((s) => <option key={s.id} value={s.id}>{s.full_name} ({s.email})</option>)}
-              </select>
-            </label>
-            <label>Study topic *<input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Operating System Deadlocks" /></label>
-            <label>Learning objectives<textarea rows={3} value={objectives} onChange={(e) => setObjectives(e.target.value)} placeholder="Understand Banker's algorithm and the Coffman conditions" /></label>
-            <label>Session title<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="(defaults to the topic)" /></label>
-            <label>Course material (optional: PDF, DOCX, TXT, MD)<input type="file" accept=".pdf,.docx,.txt,.md" onChange={(e) => setMaterial(e.target.files?.[0] ?? null)} /></label>
-            <button className="primary" disabled={!topic.trim() || !studentId || busy} onClick={start}>{busy ? "Starting…" : "Start session"}</button>
-          </>
-        )}
+        <p className="muted small">Studying as <strong>{student.full_name}</strong> ({student.email})</p>
+        <label>Study topic *<input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Operating System Deadlocks" /></label>
+        <label>Learning objectives<textarea rows={3} value={objectives} onChange={(e) => setObjectives(e.target.value)} placeholder="Understand Banker's algorithm and the Coffman conditions" /></label>
+        <label>Session title<input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="(defaults to the topic)" /></label>
+        <label>Course material (optional: PDF, DOCX, TXT, MD)<input type="file" accept=".pdf,.docx,.txt,.md" onChange={(e) => setMaterial(e.target.files?.[0] ?? null)} /></label>
+        <button className="primary" disabled={!topic.trim() || busy} onClick={start}>{busy ? "Starting…" : "Start session"}</button>
         {error && <p className="error">{error}</p>}
       </section>
 

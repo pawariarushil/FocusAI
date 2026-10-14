@@ -5,7 +5,12 @@ async function loadSessions(cfg) {
   const select = $("session");
   select.replaceChildren(new Option("\u2014 no active session \u2014", ""));
   try {
-    const resp = await fetch(`${cfg.backendUrl}/api/sessions`);
+    const { token } = await chrome.storage.session.get("token");
+    const resp = await fetch(`${cfg.backendUrl}/api/sessions`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (resp.status === 401) {
+      $("session-hint").textContent = "Log in to the FocusAI web app first, then reopen this popup.";
+      return;
+    }
     if (!resp.ok) throw new Error(resp.status);
     for (const s of await resp.json()) {
       const topic = s.study_context ? s.study_context.topic : s.title;

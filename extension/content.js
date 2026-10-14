@@ -260,12 +260,49 @@
     heatmapOn = true;
   }
 
+  // ---------- Phase 7: activity tracking (hostname only, never full URLs or page text) ----------
+  let trackDecision = null;
+  let trackHost = "";
+  let visibleSecs = 0;
+  let lastClick = 0;
+  let lastScroll = 0;
+
+  function track(event_type, metadata = {}) {
+    try {
+      const p = chrome.runtime.sendMessage({ type: "TRACK", events: [{ event_type, metadata }] });
+      if (p && p.catch) p.catch(() => {});
+    } catch (_) { /* extension reloaded: ignore */ }
+  }
+
+  function flushDwell() {
+    if (trackDecision && visibleSecs >= 1) {
+      track("dwell_time", { seconds: visibleSecs, decision: trackDecision, host: trackHost });
+    }
+    visibleSecs = 0;
+  }
+
+  setInterval(() => {
+    if (trackDecision && document.visibilityState === "visible" && document.hasFocus()) visibleSecs += 1;
+  }, 1000);
+  setInterval(flushDwell, 15000);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushDwell(); });
+  window.addEventListener("pagehide", flushDwell);
+  document.addEventListener("click", () => {
+    const n = Date.now();
+    if (trackDecision && n - lastClick > 5000) { lastClick = n; track("click"); }
+  }, true);
+  document.addEventListener("scroll", () => {
+    const n = Date.now();
+    if (trackDecision && n - lastScroll > 5000) { lastScroll = n; track("scroll"); }
+  }, { capture: true, passive: true });
   // ---------- main flow ----------
   let runId = 0;
   async function run() {
     const url = location.href.split("#")[0];
     if (url === lastUrl) return;
     lastUrl = url;
+    flushDwell();
+    trackDecision = null;
     const myRun = ++runId; // a newer navigation invalidates this run
     const stale = () => myRun !== runId || location.href.split("#")[0] !== url;
     unmount();
@@ -293,6 +330,8 @@
     if (!res || !res.result || stale()) return; // skipped, failed (fail-open) or navigated away
 
     const r = res.result;
+    trackDecision = r.decision;
+    trackHost = location.hostname;
     if (r.decision === "BLOCK") showBlock(r, payload);
     else if (r.decision === "WARN") showToast(r, "WARN");
     else showPill(r);

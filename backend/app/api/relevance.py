@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.ai.explainability import METHOD
 from app.ai.relevance_engine import get_engine
+from app.api.deps import current_user, owned_session, owned_session_or_404
+from app.models import StudySession, User
 from app.schemas.relevance import AnalyzeRequest, AnalyzeResponse, EngineInfo, HistoryItem, OverrideRequest
 from app.services import relevance_service
 from app.utils.database import get_db
@@ -29,9 +31,11 @@ def engine_info():
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
-def analyze_content(payload: AnalyzeRequest, db: Session = Depends(get_db)):
+def analyze_content(payload: AnalyzeRequest, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """Score content against the study context and return ALLOW / WARN / BLOCK with an explanation,
     matching concepts and a sentence-level relevance heatmap."""
+    if payload.session_id:
+        owned_session_or_404(db, user, payload.session_id)
     try:
         return relevance_service.analyze(db, payload)
     except relevance_service.SessionNotFound:
@@ -41,8 +45,9 @@ def analyze_content(payload: AnalyzeRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/override", status_code=status.HTTP_204_NO_CONTENT)
-def override_block(payload: OverrideRequest, db: Session = Depends(get_db)):
+def override_block(payload: OverrideRequest, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """Log that the student continued past a block (counted as a distraction attempt)."""
+    owned_session_or_404(db, user, payload.session_id)
     try:
         relevance_service.record_override(db, payload.session_id, payload.url, payload.title)
     except relevance_service.SessionNotFound:
@@ -50,8 +55,8 @@ def override_block(payload: OverrideRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/sessions/{session_id}/history", response_model=List[HistoryItem])
-def analysis_history(session_id: str, limit: int = 50, db: Session = Depends(get_db)):
-    rows = relevance_service.history(db, session_id, min(limit, 200))
+def analysis_history(limit: int = 50, session: StudySession = Depends(owned_session), db: Session = Depends(get_db)):
+    rows = relevance_service.history(db, session.id, min(limit, 200))
     return [
         HistoryItem(
             id=r.id, url=r.url, title=r.title, relevance_score=r.relevance_score,

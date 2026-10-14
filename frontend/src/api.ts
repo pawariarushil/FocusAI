@@ -34,8 +34,25 @@ export interface AnalyzeRequest {
   url?: string; title?: string; text?: string;
 }
 
+function authHeader(): Record<string, string> {
+  try {
+    const t = localStorage.getItem("focusai_token");
+    return t ? { Authorization: `Bearer ${t}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}/api${path}`, init);
+  const hadToken = "Authorization" in authHeader();
+  const res = await fetch(`${API_URL}/api${path}`, {
+    ...init,
+    headers: { ...authHeader(), ...((init?.headers as Record<string, string> | undefined) ?? {}) },
+  });
+  if (res.status === 401 && hadToken) {
+    localStorage.removeItem("focusai_token");
+    window.dispatchEvent(new Event("focusai-logout"));
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {
