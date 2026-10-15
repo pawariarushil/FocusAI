@@ -4,9 +4,10 @@ Method used: *sentence-level semantic similarity* between the study context and 
 sentence of the content (blended with key-term presence). This is a model-agnostic
 attribution and is valid for any embedding backend, including black-box APIs.
 
-Integrated Gradients / LRP are intentionally NOT claimed here: they need gradient access
-to a model we control (e.g. a fine-tuned local classifier) and are not valid for an
-external LLM API.
+This module's sentence-level scores are NOT Integrated Gradients and are not labelled as such
+(``METHOD`` is unchanged). Genuine token-level Integrated Gradients for the embedding-cosine component
+lives in ``app/ai/integrated_gradients.py`` and is served separately by ``/relevance/explain-tokens``.
+LRP is not implemented, and neither method is valid for the external LLM reviewer.
 """
 from collections import Counter
 from math import log

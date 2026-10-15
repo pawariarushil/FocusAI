@@ -75,10 +75,43 @@ bounded reason/concepts. Page text is wrapped in `<content>` tags and treated as
 * The first analysis of a video can take a few seconds (transcript + optional LLM call); later ones are cached.
 * `m.youtube.com` was not changed or tested.
 
+## Word-level explanation (Integrated Gradients)
+
+An **optional** extra on top of the sentence-level heatmap. It never changes a score or decision, and the app works
+without it.
+
+* **Endpoint:** `POST /api/relevance/explain-tokens` (login required; `session_id` is ownership-checked).
+  Body: `{"session_id": "...", "sentence": "..."}` or `{"topic": "...", "learning_objectives": "...", "sentence": "..."}`;
+  optional `steps` (8-64, default 32). `sentence` is 1-2000 chars.
+* **Method:** genuine Integrated Gradients (`app/ai/integrated_gradients.py`) on the pretrained all-MiniLM-L6-v2 weights
+  (no training/fine-tuning). Gradients are taken w.r.t. the **word-embedding** vectors (`inputs_embeds`) through the
+  transformer, masked mean pooling and L2 normalisation.
+* **Target explained:** `cosine(sentence embedding, study-context embedding)`; the context embedding is the one the existing
+  pipeline produces and is held fixed. It does **not** explain the keyword term, the calibration/blend, the thresholds or the
+  final ALLOW/WARN/BLOCK decision.
+* **Baseline:** `[PAD]` embedding at every non-special position, `[CLS]`/`[SEP]` kept (so they get exactly 0). Other
+  baselines would give different numbers; the choice is part of the explanation.
+* **Integration:** trapezoid rule, 32 steps by default; the completeness gap `|sum(attr) - (F(x) - F(baseline))|` is
+  returned (`completeness_error`, `converged`). If it exceeds max(5 % of the difference, 0.002) the step count is doubled once.
+* **Scores:** `attribution` is the **raw signed** IG value in cosine units (positive = pulls the sentence toward the study
+  context, negative = away). `normalized` = attribution / max|attribution| in [-1, 1] and is **for colouring only**.
+  Sub-word tokens are **summed** into words (keeps completeness and sign); the per-token values are included in `tokens`.
+* **Limits:** sentences are truncated to 128 tokens (`truncated: true`); `/explain-tokens` is serialised by a lock and capped
+  at 64 steps. Results are cached in memory (LRU, 256) keyed by a digest of model, sentence, study-context text and steps.
+* **Diagnostics:** `uv run python scripts/diagnose_ig.py` prints the installed model structure (modules, pooling mode, tokenizer) and runs IG with the pipeline-equivalence numbers. IG refuses to answer if its forward pass deviates from the embedding pipeline by more than 0.01.
+* **Unavailable cases** return HTTP 200 with `available: false` and a `reason` (`unsupported_backend` for the lexical
+  fallback, `unsupported_model`, `empty_input`, `torch_missing`, `attribution_failed`). Requires `uv sync --extra ml`;
+  the first run downloads the model.
+* **Extension:** the toast offers "Explain words" for the top passages; the words are drawn in FocusAI's own shadow-DOM panel
+  (blue = raises similarity, orange = lowers it; sign also in tooltips/aria-labels). The host page DOM is never modified.
+
 ## Tests and evaluation
 ```bash
-uv run pytest                                   # 128 offline tests (HTTP mocked, no API key needed)
+uv run pytest                                   # offline tests (HTTP mocked, no API key needed); see PROJECT_PROGRESS.md for counts
+uv run pytest tests/test_integrated_gradients.py -v -s   # IG: API + tiny-BERT + real all-MiniLM-L6-v2 (skips if weights unavailable)
+PYTHONPATH=. python -m unittest tests.test_ig_core       # torch-free IG kernel/aggregation/cache tests
 uv run python scripts/eval_relevance.py         # original labelled set
 uv run python scripts/eval_relevance.py --file relevance_eval_lowcontent.json   # title/description-only pages
-cd ../extension-tests && npm install && npm test   # 16 extension tests (jsdom)
+cd ../extension-tests && npm install && npm test   # extension tests (jsdom + vm)
+NODE_PATH=$(npm root -g) node browser/ig-ui.browser.js   # optional real-Chromium UI test (needs Playwright)
 ```

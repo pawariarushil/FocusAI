@@ -8,20 +8,26 @@ function shade(score: number): string {
 
 export default function Heatmap({ sentences, method }: { sentences: Sentence[]; method: string }) {
   if (sentences.length === 0) return <p className="muted">No readable text to highlight.</p>;
+
   return (
-    <div>
+    <div className="heatmap-container">
       <p className="heatmap" aria-label="Relevance heatmap">
         {sentences.map((s, i) => (
-          <span key={i} className="sentence" style={{ backgroundColor: shade(s.score) }} title={`${Math.round(s.score)}% relevant`}>
+          <span
+            key={i}
+            className="sentence"
+            style={{ backgroundColor: shade(s.score) }}
+            title={`Sentence relevance: ${Math.round(s.score)}%`}
+          >
             {s.text}{" "}
           </span>
         ))}
       </p>
       <div className="legend">
-        <span><i style={{ background: shade(80) }} /> relevant</span>
-        <span><i style={{ background: shade(45) }} /> partly relevant</span>
-        <span><i style={{ background: shade(5) }} /> unrelated</span>
-        <span className="muted">Method: {method}. Hover a sentence for its score.</span>
+        <span><i style={{ background: shade(80) }} /> Relevant (≥60%)</span>
+        <span><i style={{ background: shade(45) }} /> Partially relevant (30–59%)</span>
+        <span><i style={{ background: shade(5) }} /> Unrelated (&lt;30%)</span>
+        <span className="muted" style={{ marginLeft: "auto" }}>Method: {method}</span>
       </div>
     </div>
   );

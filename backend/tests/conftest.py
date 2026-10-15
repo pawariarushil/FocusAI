@@ -1,5 +1,6 @@
 import os
 import tempfile
+import uuid
 from pathlib import Path
 
 # Configure BEFORE the app is imported: isolated SQLite DB, offline embeddings, no LLM.
@@ -7,6 +8,7 @@ _tmp = tempfile.mkdtemp(prefix="focusai-test-")
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(_tmp) / 'test.db'}"
 os.environ["EMBEDDING_BACKEND"] = "lexical"
 os.environ["LLM_API_KEY"] = ""
+os.environ["JWT_SECRET"] = "test-only-secret-not-used-anywhere-else-0123456789"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -21,12 +23,36 @@ def client():
 
 
 @pytest.fixture()
-def student(client):
-    import uuid
+def make_user(client):
+    """Register a brand-new user of the given role; returns (user, auth_headers)."""
+    def _make(role: str = "STUDENT"):
+        email = f"{role.lower()}-{uuid.uuid4().hex[:8]}@test.edu"
+        r = client.post("/api/auth/register", json={
+            "email": email, "full_name": f"Test {role.title()}", "password": "TestPass123", "role": role,
+        })
+        assert r.status_code == 201, r.text
+        body = r.json()
+        return body["user"], {"Authorization": f"Bearer {body['access_token']}"}
+    return _make
 
-    r = client.post("/api/users", json={"email": f"s-{uuid.uuid4().hex[:8]}@test.edu", "full_name": "Test Student", "role": "STUDENT"})
-    assert r.status_code == 201
-    return r.json()
+
+@pytest.fixture()
+def student(client, make_user):
+    """A fresh student; the shared client is logged in as them for this test."""
+    user, headers = make_user("STUDENT")
+    client.headers.update(headers)
+    return user
+
+
+@pytest.fixture(autouse=True)
+def _logged_in_student(student):
+    return student
+
+
+@pytest.fixture()
+def anon(client):
+    """A client with no login at all."""
+    return TestClient(app)
 
 
 @pytest.fixture()

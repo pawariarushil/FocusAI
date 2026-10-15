@@ -78,6 +78,11 @@ class SentenceTransformerEmbedder(Embedder):
         self.name = model_name
         self._model = SentenceTransformer(model_name)
 
+    @property
+    def st_model(self):
+        """The underlying SentenceTransformer (read-only access for the token-attribution layer)."""
+        return self._model
+
     def embed(self, texts: List[str]) -> np.ndarray:
         if not texts:
             return np.zeros((0, 384), dtype=np.float32)

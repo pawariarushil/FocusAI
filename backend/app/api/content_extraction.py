@@ -1,11 +1,13 @@
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+
+from app.api.deps import current_user
 from pydantic import BaseModel
 
 from app.services.content_extractor import MAX_UPLOAD_BYTES, extract_and_normalize, extract_document
 
-router = APIRouter(prefix="/content", tags=["Content Extraction"])
+router = APIRouter(prefix="/content", tags=["Content Extraction"], dependencies=[Depends(current_user)])
 
 
 class ExtractionRequest(BaseModel):

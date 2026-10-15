@@ -3,12 +3,13 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import require_roles
 from app.models.user import User, UserRole
 from app.schemas.user import UserCreate, UserRead
 from app.utils.database import get_db
 
-# NOTE: no authentication yet - roles/RBAC arrive with the dashboards (Phase 9/10).
-router = APIRouter(prefix="/users", tags=["Users"])
+# Only administrators may list users or create accounts here. Everyone else signs up via /auth/register.
+router = APIRouter(prefix="/users", tags=["Users"], dependencies=[Depends(require_roles(UserRole.ADMIN))])
 
 
 @router.get("", response_model=List[UserRead])

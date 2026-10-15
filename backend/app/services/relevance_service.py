@@ -1,5 +1,6 @@
 """Glue between the API, the relevance engine and the database (Phases 4-6)."""
 import json
+import logging
 from typing import Optional, Tuple
 
 import numpy as np
@@ -10,10 +11,14 @@ from app.ai.explainability import level_for
 from app.ai.relevance_engine import AnalysisResult, ContentInput, get_engine
 from app.models.activity import ActivityEvent, BlockedContent
 from app.models.content_analysis import ContentAnalysis, DecisionEnum
-from app.schemas.relevance import AnalyzeRequest, AnalyzeResponse, SentenceScore
+from app.schemas.relevance import (
+    AnalyzeRequest, AnalyzeResponse, ExplainTokensRequest, ExplainTokensResponse, SentenceScore,
+    TokenPart, WordAttributionOut,
+)
 from app.services import context_service
 from app.services.content_extractor import extract_and_normalize, extract_youtube_content, extract_youtube_id
 
+logger = logging.getLogger("focusai.relevance")
 EVENT_FOR_DECISION = {"ALLOW": "content_allowed", "WARN": "warning_shown", "BLOCK": "content_blocked"}
 
 
@@ -195,3 +200,83 @@ def history(db: Session, session_id: str, limit: int = 50):
         .limit(limit)
         .all()
     )
+
+
+# ---------------------------------------------------------------- token-level Integrated Gradients (optional extra)
+_ig_cache = None
+
+
+def _get_ig_cache():
+    global _ig_cache
+    if _ig_cache is None:
+        from app.ai.integrated_gradients import AttributionCache
+        _ig_cache = AttributionCache(256)
+    return _ig_cache
+
+
+def _ig_supported(embedder) -> bool:
+    return bool(getattr(embedder, "dense", False)) and getattr(embedder, "st_model", None) is not None
+
+
+def explain_tokens(db: Session, req: ExplainTokensRequest) -> ExplainTokensResponse:
+    """Word-level Integrated Gradients for one sentence. Independent of /analyze: it never changes a score,
+    and any failure is reported as ``available=False`` so the core analysis is unaffected."""
+    from app.ai import integrated_gradients as ig
+
+    engine = get_engine()
+    ctx_row = None
+    if req.session_id:
+        ctx_row = context_service.get_study_context_by_session(db, req.session_id)
+        if not ctx_row:
+            raise SessionNotFound(req.session_id)
+        profile = build_profile(ctx_row.topic, ctx_row.learning_objectives or "", ctx_row.course_material or "")
+    else:
+        profile = build_profile(req.topic or "", req.learning_objectives or "")
+
+    meta = dict(
+        method=ig.METHOD, target=ig.TARGET_DESCRIPTION, scope=ig.SCOPE_DESCRIPTION, baseline=ig.BASELINE_DESCRIPTION,
+        score_semantics=ig.SCORE_SEMANTICS, embedding_backend=engine.embedder.name,
+    )
+
+    def unavailable(reason: str, message: str) -> ExplainTokensResponse:
+        return ExplainTokensResponse(available=False, reason=reason, message=message, **meta)
+
+    if not _ig_supported(engine.embedder):
+        return unavailable(
+            "unsupported_backend",
+            "Word-level explanations need the sentence-transformers embedding model (not the lexical fallback).",
+        )
+
+    steps = req.steps or ig.DEFAULT_STEPS
+    key = ig.cache_key(engine.embedder.name, req.sentence, profile.text, steps)
+    cache = _get_ig_cache()
+    hit = cache.get(key)
+    if hit is not None:
+        return hit.model_copy(update={"cached": True})
+
+    try:
+        ctx_vec = _context_vector(engine, db, ctx_row, profile)  # reuses the cached study-context embedding
+        expl = ig.explain(engine.embedder, req.sentence, ctx_vec, steps)
+    except ig.AttributionUnavailable as exc:
+        return unavailable(exc.reason, exc.message)
+    except Exception as exc:  # numerical failure, model error, out of memory...
+        logger.warning("token attribution failed: %s", type(exc).__name__)  # never log the text itself
+        return unavailable("attribution_failed", "The word-level explanation could not be computed.")
+
+    resp = ExplainTokensResponse(
+        available=True, n_tokens=expl.n_tokens, n_tokens_total=expl.n_tokens_total, truncated=expl.truncated, steps=expl.steps,
+        target_value=round(expl.f_input, 6), baseline_value=round(expl.f_baseline, 6),
+        sum_attributions=round(expl.sum_attributions, 6), completeness_error=round(expl.completeness_error, 6),
+        converged=expl.converged,
+        words=[
+            WordAttributionOut(
+                word=w.word, start=w.start, end=w.end, attribution=round(w.attribution, 6),
+                normalized=round(w.normalized, 4),
+                tokens=[TokenPart(token=t, attribution=round(a, 6)) for t, a in w.tokens],
+            )
+            for w in expl.words
+        ],
+        **meta,
+    )
+    cache.put(key, resp)
+    return resp

@@ -3,7 +3,7 @@
   "name": "FocusAI",
   "version": "0.1.0",
   "description": "Context-aware focus assistant: allows, warns or blocks pages based on what you are studying right now.",
-  "permissions": ["storage"],
+  "permissions": ["storage", "alarms", "notifications"],
   "host_permissions": ["http://127.0.0.1:8000/*", "http://localhost:8000/*"],
   "background": { "service_worker": "background.js" },
   "action": { "default_popup": "popup.html", "default_title": "FocusAI" },

@@ -94,3 +94,62 @@ class EngineInfo(BaseModel):
     allow_threshold: float
     warn_threshold: float
     explanation_method: str
+
+
+# ---------------------------------------------------------------- token-level (Integrated Gradients) explanation
+class ExplainTokensRequest(BaseModel):
+    """Ask for word-level Integrated Gradients of ONE sentence against the study context.
+
+    Provide ``session_id`` (uses that session's context) or ``topic`` (+ optional objectives).
+    """
+    session_id: Optional[str] = None
+    topic: Optional[str] = Field(default=None, max_length=500)
+    learning_objectives: Optional[str] = Field(default=None, max_length=5000)
+    sentence: str = Field(min_length=1, max_length=2000)
+    steps: Optional[int] = Field(default=None, ge=8, le=64, description="IG integration steps (default 32)")
+
+    @model_validator(mode="after")
+    def _check(self):
+        self.sentence = self.sentence.strip()
+        if not self.sentence:
+            raise ValueError("sentence must contain text.")
+        if not self.session_id and not (self.topic and self.topic.strip()):
+            raise ValueError("Provide either session_id or topic.")
+        return self
+
+
+class TokenPart(BaseModel):
+    token: str
+    attribution: float
+
+
+class WordAttributionOut(BaseModel):
+    word: str
+    start: int = Field(description="character offset of the word in the explained sentence")
+    end: int
+    attribution: float = Field(description="RAW Integrated Gradients value (cosine units), signed")
+    normalized: float = Field(description="attribution / max|attribution| in [-1, 1]; for colouring only")
+    tokens: List[TokenPart] = []
+
+
+class ExplainTokensResponse(BaseModel):
+    available: bool
+    reason: Optional[str] = None  # unsupported_backend | unsupported_model | empty_input | torch_missing | attribution_failed
+    message: Optional[str] = None
+    method: str = "integrated-gradients"
+    target: str = ""
+    scope: str = ""
+    baseline: str = ""
+    score_semantics: str = ""
+    words: List[WordAttributionOut] = []
+    n_tokens: int = 0
+    n_tokens_total: int = 0
+    truncated: bool = False
+    steps: int = 0
+    target_value: Optional[float] = Field(default=None, description="F(x): cosine(sentence, context)")
+    baseline_value: Optional[float] = Field(default=None, description="F(baseline)")
+    sum_attributions: Optional[float] = None
+    completeness_error: Optional[float] = None
+    converged: Optional[bool] = None
+    embedding_backend: str = ""
+    cached: bool = False
